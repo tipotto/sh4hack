@@ -1,6 +1,6 @@
-.save*
-.bak*
--bak*
+*.save
+*.save.[1-9]
+*.bak
+*.bak.[1-9]
 _*
-trash/
 backup/
