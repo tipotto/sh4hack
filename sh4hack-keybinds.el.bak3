@@ -1,0 +1,198 @@
+(defun buffer-plain-substring (beg end)
+  (interactive)
+  (let ((text (filter-buffer-substring beg end)))
+    (replace-regexp-in-string "\n" "" text)))
+;    (replace-regexp-in-string "\n" "" (replace-regexp-in-string "\s+$" "" text))))
+
+(defun term-kill ()
+  (interactive)
+  (let* ((beg (point))
+	 (end (point-max))
+	 (text (buffer-plain-substring beg end)))
+    (message "killed text: %s!!!" text)
+
+    (if (eq last-command 'term-kill)
+	(kill-append text nil)
+      (kill-new text)
+      (if (> (length kill-ring) kill-ring-max)
+	  (setcdr (nthcdr (1- kill-ring-max) kill-ring) nil)))
+    (setq this-command 'term-kill)
+    (setq kill-ring-yank-pointer kill-ring)
+    (term-send-raw)))
+
+(define-key term-raw-map (kbd "C-k") 'term-kill)
+(lookup-key term-raw-map (kbd "C-k"))
+
+;(defun term-kill-region ()
+;  (interactive)
+;  (let* ((beg (mark))
+;	 (end (point))
+;         (key (if (> end beg) "\C-h" "\ed"))
+;	 (text (buffer-plain-substring beg end))
+;	 (tlist (string-to-list text)))
+;;    (message "beg: %s, end: %s" beg end)
+;    (message "tlist")
+;    (kill-new text)
+;    (while tlist
+;      (term-send-raw-string key)
+;      (setq tlist (cdr tlist)))))
+
+(defun term-kill-region ()
+  (interactive)
+  (let* ((beg (mark))
+	 (end (point))
+         (key (if (> end beg) "\C-b" "\C-f"))
+	 (text (buffer-plain-substring beg end))
+	 (tlist (string-to-list text)))
+    (kill-new text)
+    (term-send-raw-string "\C- ")
+    (while tlist
+      (term-send-raw-string key)
+      (setq tlist (cdr tlist)))
+    (term-send-raw-string "\C-h")))
+
+;(defun term-scroll-up ()
+;  (interactive)
+;  (term-send-raw-string "^[OA"))
+
+;(defun term-scroll-down ()
+;  (interactive)
+;  (term-send-raw-string "^[OB"))
+
+;(define-key term-raw-map (kbd "s-n") '(lambda () (interactive) (scroll-up 1)))
+;(define-key term-raw-map (kbd "s-o") '(lambda () (interactive) (scroll-down 1)))
+
+;(defun enable-term-line-mode ()
+;  (message "term-line-mode"))
+;
+;(defun enable-term-char-mode ()
+;  (message "term-char-mode"))
+
+(advice-add 'term-line-mode :before '(lambda () (message "term-line-mode")))
+(advice-add 'term-char-mode :before '(lambda () (message "term-char-mode")))
+
+(define-key term-raw-map (kbd "C-c C-j") 'term-line-mode)
+(define-key term-raw-map (kbd "C-c C-k") 'term-char-mode)
+(define-key term-raw-map (kbd "s-n") 'scroll-up)
+(define-key term-raw-map (kbd "s-p") 'scroll-down)
+(define-key term-raw-map (kbd "s-n") 'scroll-up-command)
+(define-key term-raw-map (kbd "s-p") 'scroll-down-command)
+
+;(lookup-key term-raw-map (kbd "s-o"))
+;(lookup-key term-raw-map (kbd "s-n"))
+
+;(defun term-send-space ()
+;  (interactive)
+;  (term-send-raw-string "\C- "))
+
+(define-key term-raw-map (kbd "C-SPC") nil)
+;(define-key term-raw-map (kbd "C-a") 'term-send-raw)
+;(define-key term-raw-map (kbd "C-e") 'term-send-raw)
+;(define-key term-raw-map (kbd "C-f") 'term-send-raw)
+;(define-key term-raw-map (kbd "C-b") 'term-send-raw)
+
+;(defun term-kill-region ()
+;  (interactive)
+;  (let* ((beg (mark))
+;	 (end (point))
+;         (key (if (> end beg) "\C-h" "\ed"))
+;	 (counter (abs (- end beg))))
+;;    (message "beg: %s, end: %s" beg end)
+;;    (message "counter: %s" counter)
+;    (message "counter")
+;    (kill-new (buffer-plain-substring beg end))
+;    (while (> counter 0)
+;      (term-send-raw-string key)
+;      (setq counter (1- counter)))))
+
+;(define-key term-raw-map (kbd "C-w") (lambda () (term-send-raw-string "\C-h")))
+(define-key term-raw-map (kbd "C-w") 'term-send-raw)
+(define-key term-raw-map (kbd "C-w") 'term-kill-region)
+(lookup-key (current-global-map) (kbd "C-h"))
+(lookup-key term-raw-map (kbd "C-w"))
+
+(define-key term-raw-map (kbd "C-SPC") nil)
+(lookup-key term-raw-map (kbd "C-SPC"))
+(lookup-key term-raw-map (kbd "C-f"))
+(lookup-key term-raw-map (kbd "C-e"))
+
+(defun term-kill-ring-save (beg end)
+  (interactive "r")
+  (let ((text (buffer-plain-substring beg end)))
+    (if (string= "" text)
+	(message "Copied nothing.")
+      (kill-new text))))
+
+(define-key term-raw-map (kbd "M-w") 'term-send-raw)
+(define-key term-raw-map (kbd "M-w") 'term-kill-ring-save)
+(lookup-key term-raw-map (kbd "M-w"))
+
+(defun send-raw-keys ()
+  (interactive)
+  (message "emacs-keys: raw")
+  (define-key term-raw-map (kbd "C-x") 'term-send-raw)
+  (define-key term-raw-map (kbd "C-z") 'term-send-raw))
+
+(defun back-to-default ()
+  (interactive)
+  (message "emacs-keys: default")
+  (define-key term-raw-map (kbd "C-x") 'Control-X-prefix)
+  (define-key term-raw-map (kbd "C-z") 'suspend-frame))
+
+(defun is-term-mode ()
+  (interactive)
+  (string= major-mode 'term-mode))
+
+(defun toggle-emacs-keys ()
+  (interactive)
+  (when (is-term-mode)
+    (if (string= 'term-send-raw (lookup-key term-raw-map (kbd "C-x")))
+        (back-to-default)
+      (send-raw-keys))))
+
+;; Newline(\n) after the below first quotation is necessary.
+;; "Not enough arguments for format string" error occurs otherwise.
+(defhydra sh4hack-menu (:exit t :color pink :hint nil)
+  "
+
+ ######  ##     ## ##        ##     ##    ###     ######  ##    ## 
+##    ## ##     ## ##    ##  ##     ##   ## ##   ##    ## ##   ##  
+##       ##     ## ##    ##  ##     ##  ##   ##  ##       ##  ##   
+ ######  ######### ##    ##  ######### ##     ## ##       #####    
+      ## ##     ## ######### ##     ## ######### ##       ##  ##   
+##    ## ##     ##       ##  ##     ## ##     ## ##    ## ##   ##  
+ ######  ##     ##       ##  ##     ## ##     ##  ######  ##    ## 
+
+               ^Metasploit^               |              ^Shell^               |      ^Others        
+^^^^^^^^----------------------------------------------------------------------------------------------
+       ^Linux^       |       ^Windows^      |       ^SSH^      |     ^Normal^      |      ******
+^^^^^^^^----------------------------------------------------------------------------------------------
+ _l_: x64-staged     |  _w_: x64-staged     |  _p_: password   |  _n_: netcat      |  _i_: info
+ _L_: x64-stageless  |  _W_: x64-stageless  |  _P_: publickey  |  _s_: socat       |  _I_: inspect
+ _m_: x86-staged     |  _x_: x86-staged     | ^ ^              | ^ ^               |  _r_: register
+ _M_: x86-stageless  |  _X_: x86-stageless  | ^ ^              | ^ ^               |  _e_: edit
+ ^ ^                 | ^ ^                  | ^ ^              | ^ ^               |  _q_: quit
+
+"
+  ("l" (msf-linux "x64" "staged"))
+  ("L" (msf-linux "x64" "stageless"))
+  ("m" (msf-linux "x86" "staged"))
+  ("M" (msf-linux "x86" "stageless"))
+  ("w" nil)
+  ("W" nil)
+  ("x" nil)
+  ("X" nil)
+  ("p" auth-with-password)
+  ("P" auth-with-public-key)
+  ("n" upgrade-netcat)
+  ("s" connect-with-socat)
+  ("i" get-info)
+  ("I" inspect-server)
+  ("r" register-info)
+  ("e" edit-remote-file)
+  ("q" nil))
+
+(global-set-key (kbd "C-c s h") 'sh4hack-menu/body)
+(global-set-key (kbd "C-;") 'toggle-emacs-keys)
+
+(provide 'sh4hack-keybinds)
