@@ -3,4 +3,10 @@
 *.bak
 *.bak.[1-9]
 _*
-backup/
+/backup/
+/scripts/msf.rc
+/www/*
+!/www/.gitkeep
+!/www/inspect.sh
+/rfiles/*
+!/rfiles/.gitkeep

