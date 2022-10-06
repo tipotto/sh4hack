@@ -1,14 +1,16 @@
 (defhydra sh4hack-util-menu (:exit t :color pink :hint nil)
   "
 
- _e_: edit remote files
+ _e_: edit remote file
+ _f_: fetch remote file
  _s_: show info
  _i_: inspect remote server
  _u_: update info
- _r_: run scripts remotely
+ _r_: run script remotely
 
 "
   ("e" edit-remote-file)
+  ("f" fetch-remote-file)
   ("s" get-info)
   ("i" inspect-server)
   ("u" register-info)
