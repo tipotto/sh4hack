@@ -22,17 +22,18 @@
 	 (cmd (car (last (split-string substr (format "%s@%s:.+\$ " sh4h-luser sh4h-lhostname))))))
     (trim-whitespace-in-vain (remove-next-line cmd))))
 
-(defun term-extract-current-path ()
+(defun term-extract-current-path (separator)
   (interactive)
   "It is assumed that `PROMPT_ALTERNATIVE variable is equal to `oneline` in .zshrc."
   (let* ((substr1 (buffer-substring-no-properties (point) (point-min)))
-	 (substr2 (car (last (split-string substr1 (format "%s@%s:" sh4h-luser sh4h-lhostname)))))
+	 (substr2 (car (last (split-string substr1 separator))))
 	 (path (car (split-string substr2 "$ "))))
     (remove-next-line path)))
 
 (defun term-find-file ()
   (interactive)
-  (let ((dir (concat (term-extract-current-path) "/")))
+  (let* ((sep (format "%s@%s:" sh4h-luser sh4h-lhostname))
+	 (dir (concat (term-extract-current-path sep) "/")))
     (find-file (read-file-name "Find File: " dir))))
 
 (defun term-kill (str cmd-symbol)
