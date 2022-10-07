@@ -84,8 +84,6 @@
 (defvar sh4h-stty-rows nil)
 (defvar sh4h-stty-columns nil)
 
-;(setq sh4h-luser "vagrant")
-
 (defmacro inc (var)
   `(setq ,var (1+ ,var)))
 
@@ -418,20 +416,31 @@
     (unless (process-exists-p command)
       (async-shell-command command))))
 
-(defun kill-async-processes ()
-  (interactive)
-  (create-sentinel
-   (kill-all-async-processes)))
+;(defun kill-all-async-processes ()
+;  (interactive)
+;  (let ((inhibit-message t)
+;	(list (get-buffer-list async-buffer-name)))
+;    (while list
+;      (interrupt-process (car list))
+;      (setq list (cdr list)))
+;    (sleep-for 0.5)
+;    (kill-matching-buffers (format "^%s" async-buffer-name) nil t)))
 
 (defun kill-all-async-processes ()
   (interactive)
   (let ((inhibit-message t)
 	(list (get-buffer-list async-buffer-name)))
     (while list
-      (interrupt-process (car list))
+      (when (get-buffer-process (car list))
+	(interrupt-process (car list)))
       (setq list (cdr list)))
     (sleep-for 0.5)
     (kill-matching-buffers (format "^%s" async-buffer-name) nil t)))
+
+(defun kill-async-processes ()
+  (interactive)
+  (create-sentinel
+   (kill-all-async-processes)))
 
 (defun generate-async-proc (command)
   (interactive)
@@ -596,7 +605,7 @@
 
 (defun after-save-remote-file (file fpath lpath term)
   (interactive)
-  (let ((rcmd (format "nc -lp 10000 > %s && echo '[*] The file `%s` was written successfully!' && nc -z -w 3 %s 8889" fpath file sh4h-lhost))
+  (let ((rcmd (format "nc -lp 10000 > %s && echo '\n[*] The file `%s` was written successfully!' && nc -z -w 3 %s 8889" fpath file sh4h-lhost))
 	(lcmd (format "nc -w 3 %s 10000 < %s" (get-rhost) lpath)))
     (funcall (run-and-monitor nc-notification-listener
 			      (kill-async-processes)
@@ -609,12 +618,12 @@
 (defun after-remote-file-transfer (file fpath lpath term)
   (interactive)
   (create-sentinel
-   (let ((status (get-command-status (format "[ -s %s ]" lpath)))
+   (let ((status (get-command-status (format "[ -s %s ]" lpath))))
      (if (or (eq 0 status) (and (eq 1 status) (y-or-n-p (format "%s not exist. Create?:" file))))
 	 (progn (add-hook 'after-save-hook (apply-partially #'after-save-remote-file file fpath lpath term))
 		(find-file lpath))
        (kill-all-async-processes)
-       (sh (format "rm %s" lpath)))))))
+       (sh (format "rm %s" lpath))))))
 
 (defun replace-home-dir-in-filepath (path)
   (interactive)
