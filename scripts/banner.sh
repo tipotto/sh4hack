@@ -9,7 +9,7 @@ banner(){
 ##    ## ##     ##       ##  ##     ## ##     ## ##    ## ##   ##  
  ######  ##     ##       ##  ##     ## ##     ##  ######  ##    ## 
 EOF
-	printf "\033[0;35m					For all hackers...@tipotto\033[0m\n\n"
+	printf "\033[0;35m			         Shell utilities for Emacs hackers\033[0m\n\n"
 }
 
 banner;
