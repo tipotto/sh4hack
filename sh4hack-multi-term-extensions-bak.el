@@ -115,18 +115,10 @@
 (advice-add 'term-char-mode :after '(lambda () (message "term-char-mode: Get back to the normal terminal.")))
 (advice-add 'multi-term :after #'set-term-info)
 
-;(define-key term-raw-map (kbd "s-n") 'scroll-up)
-;(define-key term-raw-map (kbd "s-p") 'scroll-down)
-
-;(define-key term-raw-map (kbd "s-n") 'scroll-up-command)
-;(define-key term-raw-map (kbd "s-p") 'scroll-down-command)
-
-;(define-key term-raw-map (kbd "C-n") 'scroll-up-command)
-;(define-key term-raw-map (kbd "C-p") 'scroll-down-command)
-
-;(define-key multi-term-mode-map (kbd "C-n") 'scroll-up-command)
-;(define-key multi-term-mode-map (kbd "C-p") 'scroll-down-command)
-
+;;(define-key term-raw-map (kbd "s-n") 'scroll-up)
+;;(define-key term-raw-map (kbd "s-p") 'scroll-down)
+(define-key term-raw-map (kbd "s-n") 'scroll-up-command)
+(define-key term-raw-map (kbd "s-p") 'scroll-down-command)
 (define-key term-raw-map (kbd "C-k") 'term-kill-line)
 (define-key term-raw-map (kbd "C-u") 'term-backward-kill-line)
 (define-key term-raw-map (kbd "M-w") 'term-kill-ring-save)
